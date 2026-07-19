@@ -26,13 +26,19 @@ Module Program
     Private _timerToken As Object = Nothing
 
     Sub Main()
+        ' 1. Initialize the driver
         Application.Init()
+
+        ' 2. Populate your variable AFTER Init()
         _top = Application.Top
 
+        ' 3. Perform your UI construction
         ShowConnectionDialog()
 
         If _isConnected Then
             ShowDashboard(_client.Hostname, _client.Port)
+
+            ' 4. Run using the existing _top variable
             Application.Run(_top)
         End If
 
@@ -219,12 +225,14 @@ Module Program
                                           If args.KeyEvent.Key = Key.Enter Then
                                               Dim cmd = _txtCommand.Text.ToString().Trim()
                                               If cmd.ToUpper = "*EXIT" Then
-                                                  cmd = ""
-                                                  Application.Top.RemoveAll()
-                                                  Application.Shutdown()
-                                                  Console.Clear()
-                                                  End
+                                                  ' 1. Clear text
+                                                  _txtCommand.Text = ""
+
+                                                  ' 2. Simply request the stop. DO NOT call Shutdown() here.
+                                                  Application.RequestStop()
+                                                  Return
                                               End If
+
                                               If Not String.IsNullOrEmpty(cmd) Then
                                                   _txtCommand.Text = ""
                                                   Await ExecuteConsoleCommand(cmd)
@@ -249,7 +257,7 @@ Module Program
         _timerToken = Application.MainLoop.AddTimeout(timeoutSpan, AddressOf OnTimerTick)
 
         _top.Add(_mainWindow)
-        
+        _txtCommand.SetFocus()
         ' Initial manual update trigger
         Task.Run(Sub() UpdateDashboardData(True))
     End Sub

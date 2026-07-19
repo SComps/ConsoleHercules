@@ -256,6 +256,14 @@ Module Program
         Dim timeoutSpan = TimeSpan.FromSeconds(1)
         _timerToken = Application.MainLoop.AddTimeout(timeoutSpan, AddressOf OnTimerTick)
 
+        ' Add this to your ShowDashboard method, or ideally right before _top.Add(_mainWindow)
+        Dim menu As New MenuBar(New MenuBarItem() {
+    New MenuBarItem("_File", New MenuItem() {
+        New MenuItem("_Connect", "", AddressOf ShowConnectionDialog),
+        New MenuItem("_Quit", "Ctrl+Q", Sub() Application.RequestStop())
+    })
+})
+        _top.Add(menu)
         _top.Add(_mainWindow)
         _txtCommand.SetFocus()
         ' Initial manual update trigger

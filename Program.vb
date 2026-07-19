@@ -218,6 +218,13 @@ Module Program
         AddHandler _txtCommand.KeyUp, Async Sub(args)
                                           If args.KeyEvent.Key = Key.Enter Then
                                               Dim cmd = _txtCommand.Text.ToString().Trim()
+                                              If cmd.ToUpper = "*EXIT" Then
+                                                  cmd = ""
+                                                  Application.Top.RemoveAll()
+                                                  Application.Shutdown()
+                                                  Console.Clear()
+                                                  End
+                                              End If
                                               If Not String.IsNullOrEmpty(cmd) Then
                                                   _txtCommand.Text = ""
                                                   Await ExecuteConsoleCommand(cmd)

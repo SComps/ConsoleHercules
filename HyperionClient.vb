@@ -1,7 +1,9 @@
 Imports System.Net.Http
+Imports System.Net.Sockets
 Imports System.Text.RegularExpressions
 Imports System.Threading.Tasks
 Imports System.Collections.Generic
+Imports System.IO
 
 Public Class HyperionClient
     Private ReadOnly _httpClient As HttpClient
@@ -92,6 +94,9 @@ Public Class HyperionClient
                         For Each line In lines
                             ' Unescape JSON backslashes and double quotes
                             Dim cleaned = line.Replace("\\", "\").Replace("\""", """")
+                            If Not String.IsNullOrEmpty(cleaned) AndAlso cleaned.StartsWith("/") Then
+                                cleaned = cleaned.Substring(1)
+                            End If
                             cleanedLines.Add(cleaned)
                         Next
                         res.Syslog = cleanedLines.ToArray()
@@ -179,6 +184,50 @@ Public Class HyperionClient
             Return $"Error executing command: {ex.Message}"
         End Try
     End Function
+
+    ''' <summary>
+    ''' Issues "devlist devNum" and parses the sockdev host:port from the response.
+    ''' Example response line:
+    '''   HHC02279I 0:000C 3505 192.168.1.100:3505 sockdev ascii trunc eof IO[4]
+    ''' Returns (host, port) or (Nothing, 0) if not a sockdev / parse failed.
+    ''' </summary>
+    Public Async Function GetSockDevEndpointAsync(devNum As String) As Task(Of (Host As String, Port As Integer))
+        Try
+            Dim raw = Await SendCommandAsync($"devlist {devNum}")
+            ' Look for   ip:port   followed by   sockdev
+            Dim m = Regex.Match(raw, "(\d{1,3}(?:\.\d{1,3}){3}):(\d+)\s+sockdev",
+                                RegexOptions.IgnoreCase)
+            If m.Success Then
+                Dim host = m.Groups(1).Value
+                Dim port = Integer.Parse(m.Groups(2).Value)
+                Return (host, port)
+            End If
+        Catch
+        End Try
+        Return (Nothing, 0)
+    End Function
+
+    ''' <summary>
+    ''' Streams the raw bytes of <paramref name="filePath"/> to a Hercules
+    ''' socket-based card reader listening on <paramref name="host"/>:<paramref name="port"/>.
+    ''' </summary>
+    Public Async Function SubmitToSockDevAsync(host As String, port As Integer, filePath As String) As Task(Of String)
+        Try
+            Dim fileBytes = File.ReadAllBytes(filePath)
+            Console.WriteLine($"Submitting {Path.GetFileName(filePath)} to device {host} on port {port}")
+            Using client As New TcpClient()
+                client.SendTimeout = 15000
+                Await client.ConnectAsync(host, port)
+                Using stream = client.GetStream()
+                    Await stream.WriteAsync(fileBytes, 0, fileBytes.Length)
+                    Await stream.FlushAsync()
+                End Using
+            End Using
+            Return $"OK — sent {fileBytes.Length:N0} bytes ({Path.GetFileName(filePath)}) → {host}:{port}"
+        Catch ex As Exception
+            Return $"SockDev error: {ex.Message}"
+        End Try
+    End Function
 End Class
 
 Public Class RatesResponse
@@ -200,6 +249,32 @@ Public Class DeviceInfo
     Public Property DevType As String
     Public Property Status As String
     Public Property Assignment As String
+
+    ''' <summary>
+    ''' True when the device appears to be a socket reader.
+    ''' The Hercules devices API may show "sockdev" or an IP:port pattern
+    ''' (e.g. "0.0.0.0:3505", "*:3505") in the assignment or status fields.
+    ''' </summary>
+    Public ReadOnly Property IsSockDev As Boolean
+        Get
+            Dim a = If(Assignment, "").Trim().ToLower()
+            Dim s = If(Status, "").Trim().ToLower()
+            ' Check for the literal keyword
+            If a.Contains("sockdev") OrElse s.Contains("sockdev") Then Return True
+            ' Check for an IP:port or *:port pattern typical of socket listeners
+            Dim sockPattern As New System.Text.RegularExpressions.Regex(
+                "(\d{1,3}(\.\d{1,3}){3}|\*):\d+")
+            If sockPattern.IsMatch(a) OrElse sockPattern.IsMatch(s) Then Return True
+            Return False
+        End Get
+    End Property
+
+    ''' <summary>True when the device has a regular file currently attached.</summary>
+    Public ReadOnly Property HasFile As Boolean
+        Get
+            Return Not String.IsNullOrEmpty(Assignment) AndAlso Not IsSockDev
+        End Get
+    End Property
 End Class
 
 Public Class DevicesResponse

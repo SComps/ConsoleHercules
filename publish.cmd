@@ -27,45 +27,6 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 
-REM --- Linux x64 ---
-echo [2/5] Publishing for linux-x64...
-dotnet publish "%PROJECT_DIR%HyperionTUI.vbproj" -c Release -r linux-x64 -o "%OUTPUT_DIR%\linux-x64"
-if %ERRORLEVEL% NEQ 0 (
-    echo FAILED: linux-x64
-) else (
-    echo OK: linux-x64
-)
-echo.
-
-REM --- Linux ARM64 ---
-echo [3/5] Publishing for linux-arm64...
-dotnet publish "%PROJECT_DIR%HyperionTUI.vbproj" -c Release -r linux-arm64 -o "%OUTPUT_DIR%\linux-arm64"
-if %ERRORLEVEL% NEQ 0 (
-    echo FAILED: linux-arm64
-) else (
-    echo OK: linux-arm64
-)
-echo.
-
-REM --- macOS x64 ---
-echo [4/5] Publishing for osx-x64...
-dotnet publish "%PROJECT_DIR%HyperionTUI.vbproj" -c Release -r osx-x64 -o "%OUTPUT_DIR%\osx-x64"
-if %ERRORLEVEL% NEQ 0 (
-    echo FAILED: osx-x64
-) else (
-    echo OK: osx-x64
-)
-echo.
-
-REM --- macOS ARM64 (Apple Silicon) ---
-echo [5/5] Publishing for osx-arm64...
-dotnet publish "%PROJECT_DIR%HyperionTUI.vbproj" -c Release -r osx-arm64 -o "%OUTPUT_DIR%\osx-arm64"
-if %ERRORLEVEL% NEQ 0 (
-    echo FAILED: osx-arm64
-) else (
-    echo OK: osx-arm64
-)
-echo.
 
 echo ============================================================
 echo  Publish complete. Output in: %OUTPUT_DIR%

@@ -1,34 +1,26 @@
 @echo off
 REM ============================================================
-REM  HyperionTUI - Cross-Platform AOT Publish Script (Windows)
-REM  Publishes self-contained native AOT binaries for:
-REM    - Windows x64
-REM    - Linux x64
-REM    - Linux ARM64
-REM    - macOS x64
-REM    - macOS ARM64
+REM  HyperionTUI - Windows Native Publish Script
+REM  Builds a self-contained native executable for the current host
 REM ============================================================
 
-set PROJECT_DIR=%~dp0
-set OUTPUT_DIR=%PROJECT_DIR%publish
+set SCRIPT_DIR=%~dp0
+set OUTPUT_DIR=%SCRIPT_DIR%publish
 
 echo ============================================================
-echo  HyperionTUI AOT Publish
+echo  Publishing HyperionTUI for Windows
 echo ============================================================
 echo.
 
-REM --- Windows x64 ---
-echo [1/5] Publishing for win-x64...
-dotnet publish "%PROJECT_DIR%HyperionTUI.vbproj" -c Release -r win-x64 -o "%OUTPUT_DIR%\win-x64"
+dotnet publish "%SCRIPT_DIR%HyperionTUI.vbproj" -c Release -o "%OUTPUT_DIR%"
+
 if %ERRORLEVEL% NEQ 0 (
-    echo FAILED: win-x64
+    echo.
+    echo [ERROR] Windows build failed!
+    exit /b %ERRORLEVEL%
 ) else (
-    echo OK: win-x64
+    echo.
+    echo ============================================================
+    echo  Build complete! Output files are in: %OUTPUT_DIR%
+    echo ============================================================
 )
-echo.
-
-
-echo ============================================================
-echo  Publish complete. Output in: %OUTPUT_DIR%
-echo ============================================================
-pause

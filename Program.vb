@@ -27,8 +27,14 @@ Module Program
     Private _timerToken As Object = Nothing
     ' Maps devNum (upper-case) -> DeviceInfo; rebuilt on every device refresh
     Private _devInfoByNum As New Dictionary(Of String, DeviceInfo)()
+    
+    ' Framework event handler for system log events & operator notifications
+    Private _logEventHandler As New SystemLogEventHandler()
 
-    Sub Main()
+    Sub Main(args As String())
+        ' Parse command line parameters
+        ParseCommandLineArgs(args)
+
         ' 1. Initialize the driver
         Application.Init()
 
@@ -46,6 +52,34 @@ Module Program
         End If
 
         Application.Shutdown()
+    End Sub
+
+    ''' <summary>
+    ''' Configures application settings from environment variables and command line arguments.
+    ''' Precedence: Command line arguments (--script / -s) override Environment Variables (HYPERION_REXX_SCRIPT).
+    ''' </summary>
+    Private Sub ParseCommandLineArgs(args As String())
+        ' 1. Check environment variable HYPERION_REXX_SCRIPT
+        Dim envScript = Environment.GetEnvironmentVariable("HYPERION_REXX_SCRIPT")
+        If Not String.IsNullOrWhiteSpace(envScript) Then
+            _logEventHandler.MasterScriptPath = System.IO.Path.GetFullPath(envScript.Trim())
+            Console.WriteLine($"[Config] Master REXX script loaded from environment: {_logEventHandler.MasterScriptPath}")
+        End If
+
+        ' 2. Command line flags override environment variables
+        If args Is Nothing OrElse args.Length = 0 Then Return
+
+        For i As Integer = 0 To args.Length - 1
+            Dim arg = args(i).Trim()
+            If (arg.Equals("--script", StringComparison.OrdinalIgnoreCase) OrElse arg.Equals("-s", StringComparison.OrdinalIgnoreCase)) AndAlso i + 1 < args.Length Then
+                Dim customPath = args(i + 1).Trim()
+                If Not String.IsNullOrEmpty(customPath) Then
+                    _logEventHandler.MasterScriptPath = System.IO.Path.GetFullPath(customPath)
+                    Console.WriteLine($"[Config] Master REXX script set via CLI argument: {_logEventHandler.MasterScriptPath}")
+                End If
+                i += 1
+            End If
+        Next
     End Sub
 
     Private Function GetConfigFilePath() As String
@@ -386,6 +420,7 @@ Module Program
             ' 4. Syslog update (only auto-refresh logs if user is not typing/actively reading)
             Dim logs = Await _client.GetSyslogAsync(40)
             If logs.Syslog IsNot Nothing Then
+                _logEventHandler.ProcessLogLines(logs.Syslog)
                 Dim logContent = String.Join(Environment.NewLine, logs.Syslog)
                 Application.MainLoop.Invoke(Sub()
                                                 _txtLogs.Text = logContent

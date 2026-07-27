@@ -11,6 +11,9 @@ Imports System.Threading.Tasks
 ''' </summary>
 Public Module RexxRunner
 
+    ' Cache the interpreter path once at startup to avoid redundant OS checks
+    Private ReadOnly _cachedInterpreter As String = GetRexxInterpreterExecutable()
+
     ''' <summary>
     ''' Resolves the cross-platform REXX interpreter executable name (e.g. rexx, regina, or rexx.exe).
     ''' </summary>
@@ -30,17 +33,20 @@ Public Module RexxRunner
     ''' <param name="scriptPath">Absolute or relative path to the REXX script file.</param>
     ''' <param name="parameters">Optional list of string arguments/parameters passed to the REXX script.</param>
     ''' <param name="timeoutSeconds">Maximum execution time before hard termination (default 5 seconds).</param>
-    ''' <returns>Collection of output strings returned by the REXX script via SAY statements.</returns>
-    Public Async Function ExecuteScriptAsync(scriptPath As String, Optional parameters As IEnumerable(Of String) = Nothing, Optional timeoutSeconds As Integer = 5) As Task(Of List(Of String))
+    ''' <param name="logHandler">Optional callback action to pipe diagnostic/security messages into the system log instead of the console.</param>
+    Public Async Function ExecuteScriptAsync(scriptPath As String, Optional parameters As IEnumerable(Of String) = Nothing, Optional timeoutSeconds As Integer = 5, Optional logHandler As Action(Of String) = Nothing) As Task(Of List(Of String))
         ' 1. Security Code Validation
         Dim validation = RexxSecurityValidator.ValidateScript(scriptPath)
         If Not validation.IsValid Then
-            Console.WriteLine($"[Security Guardrail] REXX script execution denied: {validation.Reason}")
+            Dim blockMsg = $"[Security Guardrail] REXX script execution denied: {validation.Reason}"
+            If logHandler IsNot Nothing Then
+                logHandler(blockMsg)
+            End If
             Return New List(Of String) From {$"[Security Blocked]: {validation.Reason}"}
         End If
 
         Dim fullPath = Path.GetFullPath(scriptPath)
-        Dim interpreter = GetRexxInterpreterExecutable()
+        Dim interpreter = _cachedInterpreter
 
         ' 2. Build argument string with double quotes escaping for parameters
         Dim sbArgs As New StringBuilder()
@@ -114,11 +120,8 @@ Public Module RexxRunner
     ''' <summary>
     ''' Executes a REXX script file and returns the combined output as a single string.
     ''' </summary>
-    ''' <param name="scriptPath">Path to the .rex / .rexx file.</param>
-    ''' <param name="parameters">Optional list of parameters.</param>
-    ''' <returns>Combined output text formatted with line breaks.</returns>
-    Public Async Function ExecuteScriptSingleStringAsync(scriptPath As String, Optional parameters As IEnumerable(Of String) = Nothing) As Task(Of String)
-        Dim lines = Await ExecuteScriptAsync(scriptPath, parameters)
+    Public Async Function ExecuteScriptSingleStringAsync(scriptPath As String, Optional parameters As IEnumerable(Of String) = Nothing, Optional logHandler As Action(Of String) = Nothing) As Task(Of String)
+        Dim lines = Await ExecuteScriptAsync(scriptPath, parameters, 5, logHandler)
         Return String.Join(Environment.NewLine, lines)
     End Function
 

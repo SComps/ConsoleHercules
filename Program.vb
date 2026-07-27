@@ -25,11 +25,25 @@ Module Program
     Private _lastDevices As DevicesResponse = Nothing
     Private _isRefreshing As Boolean = False
     Private _timerToken As Object = Nothing
+
     ' Maps devNum (upper-case) -> DeviceInfo; rebuilt on every device refresh
     Private _devInfoByNum As New Dictionary(Of String, DeviceInfo)()
 
     ' Framework event handler for system log events & operator notifications
     Private _logEventHandler As New SystemLogEventHandler()
+
+    ' High-water mark tracking and buffer size configuration for robust log snapshot diffing
+    Private _previousLogs As String() = Nothing
+    Private ReadOnly _logBufferSize As Integer = GetInitialBufferSize()
+
+    Private Function GetInitialBufferSize() As Integer
+        Dim bufferSize As Integer = 500
+        Dim envBufferSize = Environment.GetEnvironmentVariable("HERCULES_LOG_BUFFER_SIZE")
+        If Integer.TryParse(envBufferSize, Nothing) Then
+            bufferSize = Integer.Parse(envBufferSize)
+        End If
+        Return bufferSize
+    End Function
 
     Sub Main(args As String())
         ' Parse command line parameters
@@ -417,15 +431,31 @@ Module Program
                 RefreshDeviceListView()
             End If
 
-            ' 4. Syslog update (only auto-refresh logs if user is not typing/actively reading)
-            Dim logs = Await _client.GetSyslogAsync(40)
+            ' 4. Syslog update with robust sliding snapshot diffing and configurable buffer size
+            Dim logs = Await _client.GetSyslogAsync(_logBufferSize)
             If logs.Syslog IsNot Nothing Then
-                _logEventHandler.ProcessLogLines(logs.Syslog)
-                Dim logContent = String.Join(Environment.NewLine, logs.Syslog)
+                Dim currentLogs = logs.Syslog
+
+                If isFirstTime Then
+                    ' Seed baseline on startup so historical logs don't trigger actions
+                    _previousLogs = currentLogs
+                Else
+                    If _previousLogs IsNot Nothing Then
+                        Dim newLines = currentLogs.Except(_previousLogs).ToArray()
+
+                        If newLines.Length > 0 Then
+                            _logEventHandler.ProcessLogLines(newLines)
+                        End If
+                    End If
+
+                    _previousLogs = currentLogs
+                End If
+
+                Dim logContent = String.Join(Environment.NewLine, currentLogs)
                 Application.MainLoop.Invoke(Sub()
                                                 _txtLogs.Text = logContent
                                                 ' Always scroll to bottom to tail logs
-                                                _txtLogs.CursorPosition = New Point(0, logs.Syslog.Length)
+                                                _txtLogs.CursorPosition = New Point(0, currentLogs.Length)
                                             End Sub)
             End If
         Catch
@@ -524,11 +554,6 @@ Module Program
     ''' specified card reader device.  For sockdev readers the file is streamed
     ''' over TCP; for regular readers a DEVINIT command is issued.
     ''' </summary>
-    ''' <summary>
-    ''' Opens a file-picker dialog and, if confirmed, attaches the file to the
-    ''' specified card reader device.  For sockdev readers the file is streamed
-    ''' over TCP; for regular readers a DEVINIT command is issued.
-    ''' </summary>
     Private Async Function ShowAttachReaderDialog(devNum As String) As Task
         Dim tcs As New TaskCompletionSource(Of String)()
 
@@ -561,13 +586,10 @@ Module Program
                                     End Sub)
 
         ' Probe the device with devlist to see if it is a sockdev reader.
-        ' We can't rely on the devices API assignment field because it doesn't
-        ' contain the "sockdev" keyword — that only appears in devlist output.
         Dim rawDevList = Await _client.SendCommandAsync($"devlist {devNum}")
         Dim ep = Await _client.GetSockDevEndpointAsync(devNum)
 
         If ep.Host IsNot Nothing Then
-            ' --- Debug message right before sending the file as a system log style message ---
             Application.MainLoop.Invoke(Sub()
                                             _txtLogs.Text = _txtLogs.Text.ToString() & vbCrLf & $"Submitting {System.IO.Path.GetFileName(filePath)} to device {ep.Host} on port {ep.Port}"
                                         End Sub)
@@ -577,7 +599,6 @@ Module Program
                                             _txtLogs.Text = _txtLogs.Text.ToString() & vbCrLf & $"[{result}]"
                                         End Sub)
         Else
-            ' Log devlist output for debugging purposes
             Application.MainLoop.Invoke(Sub()
                                             _txtLogs.Text = _txtLogs.Text.ToString() & vbCrLf & $"[Debug devlist response: {rawDevList}]"
                                         End Sub)
@@ -598,11 +619,9 @@ Module Program
 
     ''' <summary>
     ''' Menu-driven attach: shows a picker with all available reader devices,
-    ''' then opens the file dialog for the selected one.  Same flow as pressing
-    ''' ENTER on a reader row in the device pane.
+    ''' then opens the file dialog for the selected one.
     ''' </summary>
     Private Sub ShowReaderPickerForAttach()
-        ' Gather reader devices from the lookup
         Dim readers = _devInfoByNum.Values.Where(
             Function(d) d.DevClass IsNot Nothing AndAlso (d.DevClass.Trim().ToUpper() = "RDR" OrElse d.DevClass.Trim().ToUpper() = "READER")
         ).ToList()
@@ -741,7 +760,6 @@ Module Program
         Dim filePath = Await tcs.Task
         If String.IsNullOrEmpty(filePath) Then Return
 
-        ' Escape spaces in path for Hercules
         Dim escapedPath = filePath.Replace(" ", "' '")
         Dim cmd = $"mount {escapedPath} ON {devNum}"
 

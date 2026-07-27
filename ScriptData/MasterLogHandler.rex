@@ -1,24 +1,37 @@
 /* REXX Master Log Event Handler for HyperionTUI / Hercules */
 /* ========================================================================= */
 /* Input Arguments:                                                          */
-/*   ARG(1) - EventCode  (e.g., "IEF233A", "IEC141I", "HHC02279I", "UNKNOWN") */
+/*   ARG(1) - EventCode  (e.g., "IEF233A", "HCPMSG001I", "DMSITP143E", "HHC02279I") */
 /*   ARG(2) - LogLine    (Full text of the log entry)                        */
 /*                                                                           */
 /* Output:                                                                   */
 /*   SAY statements output Hercules commands to be executed.                 */
 /* ========================================================================= */
 
-PARSE ARG EventCode, LogLine
+PARSE ARG EventCode  LogLine
 
 EventCode = STRIP(EventCode)
 LogLine   = STRIP(LogLine)
 
-/* Example Tape Request Message Formats:                                    */
-/*   MVS IEF233A: "*02 IEF233A M 280,PRIVAT,SL,TAPEJOB,STEP1"              */
-/*   MVS IEC141I: "*05 IEC141I 280,TAPE01,SL,MYJOB,STEP2"                  */
+/* Ignore Hercules informational message echoes to prevent infinite recursion */
+IF EventCode = 'HHC01603I' THEN EXIT 0
 
+/* MF/1 Report Availability Message */
+IF EventCode = 'IRB101I' THEN DO
+  SAY "/P MF1"
+  EXIT 0
+END
+
+/* MVS Tape Request Messages */
 IF EventCode = 'IEF233A' | EventCode = 'IEC141I' THEN DO
   CALL HandleTapeRequest LogLine
+  EXIT 0
+END
+
+/* VM/CP, CMS, and RSCS Messages */
+IF LEFT(EventCode, 3) = 'HCP' | LEFT(EventCode, 3) = 'DMS' | LEFT(EventCode, 3) = 'DMT' THEN DO
+  CALL HandleVmMessage EventCode, LogLine
+  EXIT 0
 END
 
 EXIT 0
@@ -66,6 +79,25 @@ HandleTapeRequest: PROCEDURE
     /* 2. Respond to OS WTOR operator prompt if a Reply ID was present */
     IF ReplyId <> "" THEN DO
       SAY "reply " || ReplyId || ",U"
+    END
+  END
+
+RETURN
+
+/* ========================================================================= */
+/* Sample Subroutine: HandleVmMessage                                        */
+/* Handles VM/CP (HCP...), CMS (DMS...), and RSCS (DMT...) log events         */
+/* ========================================================================= */
+HandleVmMessage: PROCEDURE
+  PARSE ARG Code, LineToParse
+
+  /* Example: Handle VM CP tape mount prompt HCPMNT020E MOUNT TAPE ON 181 */
+  IF Code = 'HCPMNT020E' THEN DO
+    PARSE VAR LineToParse . 'ON' DevAddr .
+    DevAddr = STRIP(DevAddr)
+    IF DevAddr <> "" THEN DO
+      /* Auto-mount tape if configured */
+      /* SAY "mount scratch.aws ON " || DevAddr */
     END
   END
 

@@ -32,6 +32,26 @@ Module Program
     ' Framework event handler for system log events & operator notifications
     Private _logEventHandler As New SystemLogEventHandler()
 
+    ' Buffer for log messages generated before UI log view is initialized
+    Private _pendingLogMessages As New List(Of String)()
+
+    ''' <summary>
+    ''' Appends a message to the UI Log window. If the UI log view has not been initialized yet,
+    ''' queues the message to be displayed once the log view is created.
+    ''' </summary>
+    Private Sub LogToWindow(message As String)
+        If String.IsNullOrWhiteSpace(message) Then Return
+
+        If _txtLogs IsNot Nothing Then
+            Application.MainLoop.Invoke(Sub()
+                                            Dim currentText = _txtLogs.Text.ToString()
+                                            _txtLogs.Text = If(String.IsNullOrEmpty(currentText), message, currentText & vbCrLf & message)
+                                        End Sub)
+        Else
+            _pendingLogMessages.Add(message)
+        End If
+    End Sub
+
     ' High-water mark tracking and buffer size configuration for robust log snapshot diffing
     Private _previousLogs As String() = Nothing
     Private ReadOnly _logBufferSize As Integer = GetInitialBufferSize()
@@ -43,6 +63,17 @@ Module Program
             bufferSize = Integer.Parse(envBufferSize)
         End If
         Return bufferSize
+    End Function
+
+    ''' <summary>
+    ''' Dynamically determines the number of text lines currently visible in the log window.
+    ''' Accounts for user terminal window resizing at runtime.
+    ''' </summary>
+    Public Function GetVisibleLogLineCount() As Integer
+        If _txtLogs IsNot Nothing AndAlso _txtLogs.Bounds.Height > 0 Then
+            Return _txtLogs.Bounds.Height
+        End If
+        Return 25 ' Default fallback height if UI is not yet rendered
     End Function
 
     Sub Main(args As String())
@@ -70,14 +101,20 @@ Module Program
 
     ''' <summary>
     ''' Configures application settings from environment variables and command line arguments.
-    ''' Precedence: Command line arguments (--script / -s) override Environment Variables (HYPERION_REXX_SCRIPT).
+    ''' Precedence: Command line arguments (--script / -s / --script-dir / -d) override Environment Variables (HYPERION_REXX_SCRIPT / HYPERION_SCRIPT_DIR).
     ''' </summary>
     Private Sub ParseCommandLineArgs(args As String())
-        ' 1. Check environment variable HYPERION_REXX_SCRIPT
+        ' 1. Environment variables
         Dim envScript = Environment.GetEnvironmentVariable("HYPERION_REXX_SCRIPT")
         If Not String.IsNullOrWhiteSpace(envScript) Then
             _logEventHandler.MasterScriptPath = System.IO.Path.GetFullPath(envScript.Trim())
-            Console.WriteLine($"[Config] Master REXX script loaded from environment: {_logEventHandler.MasterScriptPath}")
+            LogToWindow($"[Config] Master REXX script loaded from environment: {_logEventHandler.MasterScriptPath}")
+        End If
+
+        Dim envScriptDir = Environment.GetEnvironmentVariable("HYPERION_SCRIPT_DIR")
+        If Not String.IsNullOrWhiteSpace(envScriptDir) Then
+            RexxSecurityValidator.AllowedWorkingDirectory = System.IO.Path.GetFullPath(envScriptDir.Trim())
+            LogToWindow($"[Config] REXX working directory loaded from environment: {RexxSecurityValidator.AllowedWorkingDirectory}")
         End If
 
         ' 2. Command line flags override environment variables
@@ -89,7 +126,14 @@ Module Program
                 Dim customPath = args(i + 1).Trim()
                 If Not String.IsNullOrEmpty(customPath) Then
                     _logEventHandler.MasterScriptPath = System.IO.Path.GetFullPath(customPath)
-                    Console.WriteLine($"[Config] Master REXX script set via CLI argument: {_logEventHandler.MasterScriptPath}")
+                    LogToWindow($"[Config] Master REXX script set via CLI argument: {_logEventHandler.MasterScriptPath}")
+                End If
+                i += 1
+            ElseIf (arg.Equals("--script-dir", StringComparison.OrdinalIgnoreCase) OrElse arg.Equals("-d", StringComparison.OrdinalIgnoreCase)) AndAlso i + 1 < args.Length Then
+                Dim customDir = args(i + 1).Trim()
+                If Not String.IsNullOrEmpty(customDir) Then
+                    RexxSecurityValidator.AllowedWorkingDirectory = System.IO.Path.GetFullPath(customDir)
+                    LogToWindow($"[Config] REXX script directory set via CLI argument: {RexxSecurityValidator.AllowedWorkingDirectory}")
                 End If
                 i += 1
             End If
@@ -310,6 +354,10 @@ Module Program
             .ReadOnly = True,
             .ColorScheme = logColorScheme
         }
+        If _pendingLogMessages.Count > 0 Then
+            _txtLogs.Text = String.Join(Environment.NewLine, _pendingLogMessages)
+            _pendingLogMessages.Clear()
+        End If
         frameLogs.Add(_txtLogs)
 
         ' --- BOTTOM ROW: Interactive Command Input ---
@@ -431,8 +479,9 @@ Module Program
                 RefreshDeviceListView()
             End If
 
-            ' 4. Syslog update with robust sliding snapshot diffing and configurable buffer size
-            Dim logs = Await _client.GetSyslogAsync(_logBufferSize)
+            ' 4. Syslog update with robust sliding snapshot diffing and dynamic buffer sizing
+            Dim fetchCount = Math.Max(GetVisibleLogLineCount(), _logBufferSize)
+            Dim logs = Await _client.GetSyslogAsync(fetchCount)
             If logs.Syslog IsNot Nothing Then
                 Dim currentLogs = logs.Syslog
 
@@ -441,21 +490,38 @@ Module Program
                     _previousLogs = currentLogs
                 Else
                     If _previousLogs IsNot Nothing Then
-                        Dim newLines = currentLogs.Except(_previousLogs).ToArray()
+                        Dim newLines = GetNewLogLines(_previousLogs, currentLogs)
 
                         If newLines.Length > 0 Then
-                            _logEventHandler.ProcessLogLines(newLines)
+                            Dim rexxCmds = Await _logEventHandler.ProcessLogLinesAsync(newLines, AddressOf LogToWindow)
+                            If rexxCmds IsNot Nothing AndAlso rexxCmds.Count > 0 Then
+                                For Each rexxCmd In rexxCmds
+                                    If Not String.IsNullOrWhiteSpace(rexxCmd) Then
+                                        LogToWindow($"[REXX Auto-Execute]: {rexxCmd}")
+                                        Dim cmdResp = Await _client.SendCommandAsync(rexxCmd)
+                                        If Not String.IsNullOrWhiteSpace(cmdResp) Then
+                                            LogToWindow($"[Hercules Response]: {cmdResp}")
+                                        End If
+                                    End If
+                                Next
+                            End If
                         End If
                     End If
 
                     _previousLogs = currentLogs
                 End If
 
-                Dim logContent = String.Join(Environment.NewLine, currentLogs)
+                Dim visibleHeight = GetVisibleLogLineCount()
+                Dim displayLines = If(currentLogs.Length > visibleHeight, currentLogs.Skip(currentLogs.Length - visibleHeight).ToArray(), currentLogs)
+                Dim logContent = String.Join(Environment.NewLine, displayLines)
+
                 Application.MainLoop.Invoke(Sub()
-                                                _txtLogs.Text = logContent
-                                                ' Always scroll to bottom to tail logs
-                                                _txtLogs.CursorPosition = New Point(0, currentLogs.Length)
+                                                ' Only update text if content changed to prevent redraw flickering
+                                                If _txtLogs.Text.ToString() <> logContent Then
+                                                    _txtLogs.Text = logContent
+                                                    ' Scroll to bottom of visible lines
+                                                    _txtLogs.CursorPosition = New Point(0, displayLines.Length)
+                                                End If
                                             End Sub)
             End If
         Catch
@@ -464,6 +530,44 @@ Module Program
             _isRefreshing = False
         End Try
     End Sub
+
+    ''' <summary>
+    ''' Compares previous log snapshot with current log snapshot using sequence-based
+    ''' suffix-to-prefix overlap matching to extract newly appended log lines without duplicates.
+    ''' </summary>
+    Private Function GetNewLogLines(previousLogs As String(), currentLogs As String()) As String()
+        If previousLogs Is Nothing OrElse previousLogs.Length = 0 Then
+            Return If(currentLogs, Array.Empty(Of String)())
+        End If
+        If currentLogs Is Nothing OrElse currentLogs.Length = 0 Then
+            Return Array.Empty(Of String)()
+        End If
+
+        Dim maxOverlap = Math.Min(previousLogs.Length, currentLogs.Length)
+        Dim overlapSize = 0
+
+        For k As Integer = maxOverlap To 1 Step -1
+            Dim isMatch = True
+            Dim prevOffset = previousLogs.Length - k
+            For i As Integer = 0 To k - 1
+                If previousLogs(prevOffset + i) <> currentLogs(i) Then
+                    isMatch = False
+                    Exit For
+                End If
+            Next
+
+            If isMatch Then
+                overlapSize = k
+                Exit For
+            End If
+        Next
+
+        If overlapSize < currentLogs.Length Then
+            Return currentLogs.Skip(overlapSize).ToArray()
+        Else
+            Return Array.Empty(Of String)()
+        End If
+    End Function
 
     Private Async Function ExecuteConsoleCommand(cmd As String) As Task
         ' Append a temporary indicator
@@ -882,7 +986,7 @@ Public Class LogTextView
     Private ReadOnly _yellowAttr As Terminal.Gui.Attribute = Terminal.Gui.Attribute.Make(Color.BrightYellow, Color.Black)
     Private ReadOnly _greenAttr As Terminal.Gui.Attribute = Terminal.Gui.Attribute.Make(Color.BrightGreen, Color.Black)
 
-    Private _lastLine As List(Of System.Rune) = Nothing
+    Private _lastLineText As String = Nothing
     Private _lastMatchIndex As Integer = -1
     Private _lastMatchLength As Integer = -1
     Private _hasLastMatch As Boolean = False
@@ -901,10 +1005,10 @@ Public Class LogTextView
             Return
         End If
 
-        If Not Object.ReferenceEquals(line, _lastLine) Then
-            _lastLine = line
-            Dim lineText = New String(line.Select(Function(r) Convert.ToChar(r.Value)).ToArray())
-            Dim m = System.Text.RegularExpressions.Regex.Match(lineText, "\b(HHC[A-Z0-9]{5}[A-Z])\b")
+        Dim lineText = New String(line.Select(Function(r) Convert.ToChar(r.Value)).ToArray())
+        If lineText <> _lastLineText Then
+            _lastLineText = lineText
+            Dim m = SystemLogEventHandler.EventCodeRegex.Match(lineText)
             If m.Success Then
                 _hasLastMatch = True
                 _lastMatchIndex = m.Index

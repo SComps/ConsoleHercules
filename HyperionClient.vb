@@ -214,7 +214,6 @@ Public Class HyperionClient
     Public Async Function SubmitToSockDevAsync(host As String, port As Integer, filePath As String) As Task(Of String)
         Try
             Dim fileBytes = File.ReadAllBytes(filePath)
-            Console.WriteLine($"Submitting {Path.GetFileName(filePath)} to device {host} on port {port}")
             Using client As New TcpClient()
                 client.SendTimeout = 15000
                 Await client.ConnectAsync(host, port)

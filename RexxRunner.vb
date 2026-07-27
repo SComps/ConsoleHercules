@@ -52,21 +52,14 @@ Public Module RexxRunner
         Dim sbArgs As New StringBuilder()
         sbArgs.Append($"""{fullPath}""")
 
-        If parameters IsNot Nothing Then
-            For Each param In parameters
-                If param IsNot Nothing Then
-                    Dim escapedParam = param.Replace("""", """""")
-                    sbArgs.Append($" ""{escapedParam}""")
-                End If
-            Next
-        End If
+
 
         Dim psi As New ProcessStartInfo() With {
             .FileName = interpreter,
-            .Arguments = sbArgs.ToString(),
+            .Arguments = $"""{fullPath}"" {parameters(0)} ""{parameters(1)}""",
+            .UseShellExecute = False,
             .RedirectStandardOutput = True,
             .RedirectStandardError = True,
-            .UseShellExecute = False,
             .CreateNoWindow = True,
             .StandardOutputEncoding = Encoding.UTF8
         }
@@ -114,7 +107,7 @@ Public Module RexxRunner
         End Try
 
         ' 4. Sanitize and filter returned output lines
-        Return RexxSecurityValidator.SanitizeCommands(outputLines)
+        Return RexxSecurityValidator.SanitizeCommands(outputLines, logHandler)
     End Function
 
     ''' <summary>

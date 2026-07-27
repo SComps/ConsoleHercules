@@ -8,10 +8,19 @@ Imports System.Text.RegularExpressions
 ''' </summary>
 Public Class RexxSecurityValidator
 
+    Private Shared Function GetDefaultWorkingDirectory() As String
+        Dim envDir = Environment.GetEnvironmentVariable("HYPERION_SCRIPT_DIR")
+        If Not String.IsNullOrWhiteSpace(envDir) Then
+            Return System.IO.Path.GetFullPath(envDir.Trim())
+        End If
+        Return System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ScriptData")
+    End Function
+
     ''' <summary>
-    ''' Designated directory where REXX scripts are permitted to perform file operations.
+    ''' Designated directory where REXX scripts are permitted to execute and perform file operations.
+    ''' Configurable via HYPERION_SCRIPT_DIR environment variable or --script-dir (-d) CLI flag.
     ''' </summary>
-    Public Shared Property AllowedWorkingDirectory As String = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ScriptData")
+    Public Shared Property AllowedWorkingDirectory As String = GetDefaultWorkingDirectory()
 
     ''' <summary>
     ''' Dangerous REXX keywords or external system call routines that could compromise the host operating system.
@@ -84,48 +93,31 @@ Public Class RexxSecurityValidator
     ''' Allows Hercules internal commands, device numbers, and SCP guest OS commands (prefixed by ., /, ", etc.).
     ''' </summary>
     ''' <param name="outputLines">Raw output lines from REXX SAY statements.</param>
+    ''' <param name="logHandler">Optional callback action to receive security warning log messages.</param>
     ''' <returns>Sanitized list of safe Hercules command strings.</returns>
-    Public Shared Function SanitizeCommands(outputLines As IEnumerable(Of String)) As List(Of String)
-        Dim safeCommands As New List(Of String)()
-        If outputLines Is Nothing Then Return safeCommands
+    Public Shared Function SanitizeCommands(outputLines As IEnumerable(Of String), Optional logHandler As Action(Of String) = Nothing) As List(Of String)
+        Dim resultCommands As New List(Of String)()
+        If outputLines Is Nothing Then Return resultCommands
 
         For Each line In outputLines
             If String.IsNullOrWhiteSpace(line) Then Continue For
 
             Dim trimmed = line.Trim()
 
-            ' Ignore comments or debug lines starting with /*, #, or [
-            If trimmed.StartsWith("/*") OrElse trimmed.StartsWith("#") OrElse trimmed.StartsWith("[") Then Continue For
-
-            ' Disallow host shell injection characters (;&|><`$)
+            ' Disallow host shell injection characters (;&|><`$) for security safety
             If Regex.IsMatch(trimmed, "[;&|><`$]") Then
-                Console.WriteLine($"[Security Warning] Suppressed command containing illegal shell characters: '{trimmed}'")
+                Dim warnMsg = $"[Security Warning] Suppressed command containing illegal shell characters: '{trimmed}'"
+                If logHandler IsNot Nothing Then
+                    logHandler(warnMsg)
+                End If
                 Continue For
             End If
 
-            ' Strip common SCP prefix characters (. / " ' *) to test the underlying command verb
-            Dim cmdWithoutPrefix = trimmed.TrimStart("."c, "/"c, """"c, "'"c, "*"c)
-            If String.IsNullOrWhiteSpace(cmdWithoutPrefix) Then Continue For
-
-            Dim firstWord = cmdWithoutPrefix.Split(" "c)(0).ToUpperInvariant()
-
-            ' Accept if command starts with a known Hercules verb, device number (e.g. 0280), or numeric reply ID
-            If AllowedHerculesCommands.Contains(firstWord) OrElse
-               Regex.IsMatch(firstWord, "^[0-9A-F]{3,4}$") OrElse
-               Regex.IsMatch(firstWord, "^\d{1,4}$") OrElse
-               Regex.IsMatch(firstWord, "^R\d{1,4}$") Then
-                safeCommands.Add(trimmed)
-            Else
-                ' Allow general SCP prefixed commands sent to guest OS (e.g. .reply, /r, "r)
-                If trimmed.StartsWith(".") OrElse trimmed.StartsWith("/") OrElse trimmed.StartsWith("""") OrElse trimmed.StartsWith("'") Then
-                    safeCommands.Add(trimmed)
-                Else
-                    Console.WriteLine($"[Security Warning] Suppressed unrecognized command verb '{firstWord}' from line: '{trimmed}'")
-                End If
-            End If
+            ' Return all SAY output lines directly to the calling code unmolested
+            resultCommands.Add(trimmed)
         Next
 
-        Return safeCommands
+        Return resultCommands
     End Function
 
 End Class

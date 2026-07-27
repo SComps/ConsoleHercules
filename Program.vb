@@ -9,17 +9,17 @@ Module Program
     Private _top As Toplevel
     Private _mainWindow As Window
     Private _isConnected As Boolean = False
-    
+
     ' UI Elements for Dashboard
     Private _lblMips As Label
     Private _lblSios As Label
     Private _lblPsw As Label
     Private _lblCpuInfo As Label
-    
+
     Private _lstDevices As ListView
     Private _txtLogs As LogTextView
     Private _txtCommand As TextField
-    
+
     Private _deviceList As New List(Of String)()
     Private _expandedGroups As New HashSet(Of String)()
     Private _lastDevices As DevicesResponse = Nothing
@@ -27,7 +27,7 @@ Module Program
     Private _timerToken As Object = Nothing
     ' Maps devNum (upper-case) -> DeviceInfo; rebuilt on every device refresh
     Private _devInfoByNum As New Dictionary(Of String, DeviceInfo)()
-    
+
     ' Framework event handler for system log events & operator notifications
     Private _logEventHandler As New SystemLogEventHandler()
 
@@ -340,7 +340,7 @@ Module Program
 
         ' Assemble window
         _mainWindow.Add(frameSysInfo, frameDevices, frameLogs, frameInput)
-        
+
         ' Hotkey to exit: Ctrl+Q
         AddHandler _mainWindow.KeyUp, Sub(args)
                                           If args.KeyEvent.Key = (Key.CtrlMask Or CType(81, Key)) Then
@@ -821,7 +821,7 @@ Module Program
 
         Dim dialog As New Dialog("Select Tape to Detach/Unmount", 50, drives.Count + 6)
 
-        Dim items = drives.Select(Function(t) $"{t.DevNum} — {System.IO.Path.GetFileName(t.Assignment)}"        ).ToList()
+        Dim items = drives.Select(Function(t) $"{t.DevNum} — {System.IO.Path.GetFileName(t.Assignment)}").ToList()
 
         Dim lstDrives As New ListView(items) With {
             .X = 1,
@@ -863,7 +863,7 @@ Public Class LogTextView
 
     Private ReadOnly _yellowAttr As Terminal.Gui.Attribute = Terminal.Gui.Attribute.Make(Color.BrightYellow, Color.Black)
     Private ReadOnly _greenAttr As Terminal.Gui.Attribute = Terminal.Gui.Attribute.Make(Color.BrightGreen, Color.Black)
-    
+
     Private _lastLine As List(Of System.Rune) = Nothing
     Private _lastMatchIndex As Integer = -1
     Private _lastMatchLength As Integer = -1
